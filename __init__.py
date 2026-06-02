@@ -21,7 +21,7 @@ class SimpleOpenAIAPINode:
     - Supports base_url, api_key, model
     - Supports system prompt and user prompt
     - Supports temperature, top_p, top_k, min_p, presence_penalty, repetition_penalty
-    - Supports reasoning_effort: high / max
+    - Supports reasoning_effort: low / medium / high / xhigh / max
     - Supports max_tokens
     - Optional image/audio/video inputs
     - Output mode: plain text or JSON
@@ -73,7 +73,7 @@ class SimpleOpenAIAPINode:
                     },
                 ),
                 "reasoning_effort": (
-                    ["high", "max"],
+                    ["low", "medium", "high", "xhigh", "max"],
                     {
                         "default": "high",
                     },
@@ -163,9 +163,13 @@ class SimpleOpenAIAPINode:
         }
 
     RETURN_TYPES = ("STRING", "STRING")
-    RETURN_NAMES = ("text", "json")
+    RETURN_NAMES = ("文本", "JSON")
+    OUTPUT_TOOLTIPS = (
+        "模型返回的最终文本内容，已尽量过滤思考/推理片段。",
+        "当输出格式为 JSON 时返回格式化 JSON；否则为空字符串。",
+    )
     FUNCTION = "run"
-    CATEGORY = "api/OpenAI"
+    CATEGORY = "eastmoe/Comfy-Simple-LLM"
 
     def run(
         self,
@@ -263,7 +267,8 @@ class SimpleOpenAIAPINode:
 
         # Some OpenAI-compatible backends accept reasoning_effort directly.
         # For maximum compatibility, it is also placed in create_kwargs below.
-        selected_reasoning_effort = reasoning_effort if reasoning_effort in {"high", "max"} else "high"
+        allowed_reasoning_efforts = {"low", "medium", "high", "xhigh", "max"}
+        selected_reasoning_effort = reasoning_effort if reasoning_effort in allowed_reasoning_efforts else "high"
 
         # Non-standard OpenAI-compatible sampling params.
         if topk and topk > 0:
@@ -635,5 +640,9 @@ NODE_CLASS_MAPPINGS = {
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "SimpleOpenAIAPINode": "Simple OpenAI API",
+    "SimpleOpenAIAPINode": "简易 OpenAI API",
 }
+
+WEB_DIRECTORY = "./web"
+
+__all__ = ["NODE_CLASS_MAPPINGS", "NODE_DISPLAY_NAME_MAPPINGS", "WEB_DIRECTORY"]
