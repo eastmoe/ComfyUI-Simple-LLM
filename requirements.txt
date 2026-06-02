@@ -1,0 +1,5 @@
+# deps provided by comfyui
+# pillow
+# numpy
+
+openai
