@@ -13,7 +13,7 @@ eastmoe -> Comfy-Simple-LLM -> 简易 OpenAI API
 - 支持自定义 `base_url`、`apikey` 和 `model`，可连接 OpenAI 或其他 OpenAI 兼容后端。
 - 支持 system prompt 与 user prompt。
 - 支持 `temperature`、`top_p`、`top_k`、`min_p`、`presence_penalty`、`repetition_penalty`、`max_tokens` 等参数。
-- 支持 `reasoning_effort`，可选 `low`、`medium`、`high`、`xhigh`、`max`，并会尽量过滤推理模型输出中的思考片段。
+- 支持 `reasoning_effort`，可选 `off`、`low`、`medium`、`high`、`xhigh`、`max`，并会尽量过滤推理模型输出中的思考片段。
 - 支持可选图片、音频、视频输入，也可以通过 `media_path` 传入本地媒体文件。
 - 支持文本输出和 JSON 输出。
 - 提供中文本地化文件 `locales/zh-CN/nodeDefs.json`、`locales/zh/nodeDefs.json` 和 `locales/zh-cn/nodeDefs.json`，用于覆盖节点、参数和接口名称；同时保留 `locales/zh-CN/nodes.json` 作为兼容说明文件。
@@ -52,7 +52,7 @@ pip install -r requirements.txt
 | `model` | 模型名称。 |
 | `systemprompt` | system 角色提示词。 |
 | `userprompt` | user 角色提示词。 |
-| `reasoning_effort` | 推理强度，可选 `low`、`medium`、`high`、`xhigh` 或 `max`，具体支持情况取决于后端。 |
+| `reasoning_effort` | 推理强度，可选 `off`、`low`、`medium`、`high`、`xhigh` 或 `max`，具体支持情况取决于后端。`off` 不发送 reasoning/thinking 参数。 |
 | `max_tokens` | 最大输出 token 数。 |
 | `temperature` | 输出随机性。 |
 | `topp` | 对应 Chat Completions 的 `top_p`。 |
@@ -77,6 +77,7 @@ pip install -r requirements.txt
 
 - 如果使用非 OpenAI 官方服务，请确认该服务支持 `/v1/chat/completions` 和你启用的参数。
 - `top_k`、`min_p`、`repetition_penalty`、`thinking` 等字段属于后端相关参数，不同服务可能会忽略或报错。
+- DeepSeek 思考模式下，`message.reasoning_content` 和 `message.content` 是分开的；`max_tokens` 可能会先被推理内容消耗完，导致最终 `content` 为空。节点会在 `max` 推理耗尽预算时自动用 `high` 重试一次；如果仍无最终内容，会在文本输出中显示诊断信息。
 - 如果要传入视频文件，优先使用 `media_path`，并确认后端支持 `video_url` data URL。
 - JSON 模式会请求后端返回 JSON；如果模型仍返回非法 JSON，节点会把原始内容包装到一个 JSON 对象中。
 

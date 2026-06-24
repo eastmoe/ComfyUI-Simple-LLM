@@ -73,7 +73,7 @@ class SimpleOpenAIAPINode:
                     },
                 ),
                 "reasoning_effort": (
-                    ["low", "medium", "high", "xhigh", "max"],
+                    ["off", "low", "medium", "high", "xhigh", "max"],
                     {
                         "default": "high",
                     },
@@ -260,15 +260,16 @@ class SimpleOpenAIAPINode:
         extra_body: Dict[str, Any] = {}
 
         # DeepSeek / other reasoning-model compatible options.
-        # Your reference format:
-        # "thinking": {"type": "enabled"}
-        # "reasoning_effort": "high"
-        extra_body["thinking"] = {"type": "enabled"}
-
-        # Some OpenAI-compatible backends accept reasoning_effort directly.
-        # For maximum compatibility, it is also placed in create_kwargs below.
-        allowed_reasoning_efforts = {"low", "medium", "high", "xhigh", "max"}
+        # Thinking models return hidden reasoning in message.reasoning_content and
+        # the final user-visible answer in message.content. The output budget may
+        # be consumed by reasoning before content is produced, so reasoning is
+        # enabled only when the user selects a non-off effort.
+        allowed_reasoning_efforts = {"off", "low", "medium", "high", "xhigh", "max"}
         selected_reasoning_effort = reasoning_effort if reasoning_effort in allowed_reasoning_efforts else "high"
+        use_reasoning = selected_reasoning_effort != "off"
+
+        if use_reasoning:
+            extra_body["thinking"] = {"type": "enabled"}
 
         # Non-standard OpenAI-compatible sampling params.
         if topk and topk > 0:
@@ -287,9 +288,13 @@ class SimpleOpenAIAPINode:
             "top_p": float(topp),
             "presence_penalty": float(presence_penalty),
             "max_tokens": int(max_tokens),
-            "reasoning_effort": selected_reasoning_effort,
-            "extra_body": extra_body,
         }
+
+        if use_reasoning:
+            create_kwargs["reasoning_effort"] = selected_reasoning_effort
+
+        if extra_body:
+            create_kwargs["extra_body"] = extra_body
 
         if output_format == "json":
             create_kwargs["response_format"] = {"type": "json_object"}
@@ -299,6 +304,18 @@ class SimpleOpenAIAPINode:
         response = client.chat.completions.create(**create_kwargs)
 
         text = self._extract_final_answer(response)
+        if (
+            not text
+            and selected_reasoning_effort == "max"
+            and self._is_reasoning_length_exhausted(response)
+        ):
+            retry_kwargs = dict(create_kwargs)
+            retry_kwargs["reasoning_effort"] = "high"
+            response = client.chat.completions.create(**retry_kwargs)
+            text = self._extract_final_answer(response)
+
+        if not text:
+            text = self._empty_content_diagnostic(response, int(max_tokens), selected_reasoning_effort)
         text = self._strip_reasoning_text(text)
 
         if output_format == "json":
@@ -347,6 +364,52 @@ class SimpleOpenAIAPINode:
             return ""
 
         return str(content)
+
+    def _is_reasoning_length_exhausted(self, response) -> bool:
+        try:
+            choice = response.choices[0]
+            message = choice.message
+        except Exception:
+            return False
+
+        content = getattr(message, "content", None)
+        reasoning_content = getattr(message, "reasoning_content", None)
+        return (
+            getattr(choice, "finish_reason", "") == "length"
+            and not content
+            and bool(reasoning_content)
+        )
+
+    def _empty_content_diagnostic(self, response, max_tokens: int, reasoning_effort: str) -> str:
+        """
+        Returns a visible diagnostic when a reasoning backend produced no final
+        answer. This avoids a blank ComfyUI preview while keeping hidden
+        reasoning_content out of the normal text output.
+        """
+        try:
+            choice = response.choices[0]
+            message = choice.message
+        except Exception:
+            return ""
+
+        reasoning_content = getattr(message, "reasoning_content", None)
+        if not reasoning_content:
+            return ""
+
+        finish_reason = getattr(choice, "finish_reason", "")
+        if finish_reason == "length":
+            return (
+                "[LLM API returned no final content]\n"
+                "The backend produced reasoning_content, but message.content was empty because "
+                f"generation stopped at max_tokens={max_tokens}. "
+                "Increase max_tokens or lower reasoning_effort (for DeepSeek, prefer high instead of max for prompt rewriting)."
+            )
+
+        return (
+            "[LLM API returned reasoning_content but no final content]\n"
+            f"finish_reason={finish_reason or 'unknown'}, reasoning_effort={reasoning_effort}. "
+            "Try lowering reasoning_effort or disabling reasoning for this request."
+        )
 
     def _strip_reasoning_text(self, text: str) -> str:
         """
