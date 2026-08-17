@@ -1,7 +1,15 @@
 const { app } = window.comfyAPI.app;
 
-const NODE_CLASS = "SimpleOpenAIAPINode";
-const NODE_TITLE = "简易 OpenAI API";
+const NODE_CONFIGS = {
+  SimpleOpenAIAPINode: {
+    title: "简易 OpenAI API",
+    outputs: ["文本", "JSON"],
+  },
+  ChainOfThoughtFilterNode: {
+    title: "思维链过滤",
+    outputs: ["文本"],
+  },
+};
 
 const INPUT_LABELS = {
   image: "图片",
@@ -22,6 +30,8 @@ const INPUT_LABELS = {
   repetition_penalty: "重复惩罚",
   output_format: "输出格式",
   media_path: "媒体路径",
+  text: "文本",
+  filter_mode: "过滤模式",
 };
 
 const OUTPUT_LABELS = {
@@ -41,11 +51,11 @@ function chainCallback(target, name, callback) {
 }
 
 function applyLabels(node) {
-  if (node.constructor?.comfyClass !== NODE_CLASS && node.type !== NODE_CLASS) {
-    return;
-  }
+  const nodeClass = node.constructor?.comfyClass ?? node.type;
+  const config = NODE_CONFIGS[nodeClass];
+  if (!config) return;
 
-  node.title = NODE_TITLE;
+  node.title = config.title;
 
   for (const input of node.inputs ?? []) {
     const label = INPUT_LABELS[input.name] ?? INPUT_LABELS[input.label];
@@ -75,10 +85,11 @@ app.registerExtension({
   name: "eastmoe.ComfySimpleLLM.i18n",
 
   async beforeRegisterNodeDef(nodeType, nodeData) {
-    if (nodeData?.name !== NODE_CLASS) return;
+    const config = NODE_CONFIGS[nodeData?.name];
+    if (!config) return;
 
-    nodeData.display_name = NODE_TITLE;
-    nodeData.output_name = ["文本", "JSON"];
+    nodeData.display_name = config.title;
+    nodeData.output_name = config.outputs;
 
     for (const section of ["required", "optional"]) {
       const inputs = nodeData.input?.[section];

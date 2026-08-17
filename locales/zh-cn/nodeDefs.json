@@ -97,5 +97,34 @@
         "tooltip": "当输出格式为 JSON 时返回格式化 JSON；否则为空字符串。"
       }
     }
+  },
+  "ChainOfThoughtFilterNode": {
+    "display_name": "思维链过滤",
+    "description": "过滤其它节点所生成文本中的思维链或推理块，仅保留最终可见文本。",
+    "inputs": {
+      "text": {
+        "name": "文本",
+        "tooltip": "连接其它节点生成的文本。"
+      },
+      "filter_mode": {
+        "name": "过滤模式",
+        "tooltip": "选择思维链的包装格式；自动模式会处理多种常见格式。",
+        "options": {
+          "<think>...</think>": "<think>...</think>（常用）",
+          "自动（常见格式）": "自动（常见格式）",
+          "<thinking>...</thinking>": "<thinking>...</thinking>",
+          "<reasoning>...</reasoning>": "<reasoning>...</reasoning>",
+          "<analysis>...</analysis>": "<analysis>...</analysis>",
+          "Markdown 推理块": "Markdown 推理块",
+          "Harmony analysis/final": "Harmony analysis/final"
+        }
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "文本",
+        "tooltip": "过滤思维链后保留的最终文本。"
+      }
+    }
   }
 }

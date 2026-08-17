@@ -11,6 +11,194 @@ from PIL import Image
 from openai import OpenAI
 
 
+REASONING_FILTER_MODES = (
+    "<think>...</think>",
+    "自动（常见格式）",
+    "<thinking>...</thinking>",
+    "<reasoning>...</reasoning>",
+    "<analysis>...</analysis>",
+    "Markdown 推理块",
+    "Harmony analysis/final",
+)
+
+REASONING_TAGS_BY_MODE = {
+    "<think>...</think>": ("think",),
+    "<thinking>...</thinking>": ("thinking",),
+    "<reasoning>...</reasoning>": ("reasoning",),
+    "<analysis>...</analysis>": ("analysis",),
+    "自动（常见格式）": (
+        "think",
+        "thinking",
+        "reasoning",
+        "analysis",
+        "chain_of_thought",
+    ),
+}
+
+
+def _remove_reasoning_tag(text: str, tag: str) -> str:
+    """Remove complete and truncated XML-like reasoning blocks for one tag."""
+    escaped_tag = re.escape(tag)
+    opening = rf"<{escaped_tag}\b[^>]*>"
+    closing = rf"</{escaped_tag}\s*>"
+    flags = re.IGNORECASE | re.DOTALL
+
+    # Run more than once so adjacent/nested-looking model output is handled
+    # without making the expression greedy across separate reasoning blocks.
+    previous = None
+    while previous != text:
+        previous = text
+        text = re.sub(rf"{opening}.*?{closing}", "", text, flags=flags)
+
+    # A generation can be truncated before the closing tag. Conversely, some
+    # chat templates inject the opening token and expose only a closing token.
+    text = re.sub(rf"{opening}.*\Z", "", text, flags=flags)
+    text = re.sub(rf"\A.*?{closing}", "", text, flags=flags)
+
+    # Do not leave delimiters behind if a backend emitted malformed duplicates.
+    text = re.sub(opening, "", text, flags=re.IGNORECASE)
+    text = re.sub(closing, "", text, flags=re.IGNORECASE)
+    return text
+
+
+def _remove_markdown_reasoning(text: str) -> str:
+    languages = r"think|thinking|reasoning|analysis|chain[_ -]?of[_ -]?thought"
+    fenced = re.compile(
+        rf"^[ \t]*(?P<fence>`{{3,}}|~{{3,}})[ \t]*(?:{languages})[ \t]*\r?\n"
+        rf".*?^[ \t]*(?P=fence)[ \t]*$",
+        flags=re.IGNORECASE | re.DOTALL | re.MULTILINE,
+    )
+    text = fenced.sub("", text)
+
+    # Also hide a reasoning fence cut off by max_tokens.
+    unclosed_fence = re.compile(
+        rf"^[ \t]*(?:`{{3,}}|~{{3,}})[ \t]*(?:{languages})[ \t]*\r?\n.*\Z",
+        flags=re.IGNORECASE | re.DOTALL | re.MULTILINE,
+    )
+    text = unclosed_fence.sub("", text)
+
+    # Handle a conventional Reasoning/Final Answer pair. Requiring the response
+    # to start with a reasoning heading avoids deleting ordinary prose that uses
+    # a later heading named "Analysis".
+    reasoning_heading = re.match(
+        r"\A\s*(?:#{1,6}[ \t]+)?"
+        r"(?:reasoning|thinking|analysis|思考过程|推理过程|分析)"
+        r"(?:[ \t]*[:：][ \t]*|[ \t]*\r?\n)",
+        text,
+        flags=re.IGNORECASE,
+    )
+    if reasoning_heading:
+        final_heading = re.compile(
+            r"^[ \t]*(?:#{1,6}[ \t]+)?"
+            r"(?:final answer|final|answer|最终答案|最终回答|答案)"
+            r"(?:[ \t]*[:：][ \t]*|[ \t]*\r?\n)",
+            flags=re.IGNORECASE | re.MULTILINE,
+        )
+        matches = list(final_heading.finditer(text))
+        if matches:
+            text = text[matches[-1].end():]
+
+    return text
+
+
+def _filter_harmony_reasoning(text: str) -> str:
+    """Extract user-visible channels from raw OpenAI Harmony model output."""
+    channel_pattern = re.compile(
+        r"<\|channel\|>(?P<channel>analysis|commentary|final)"
+        r"(?:(?!<\|(?:channel|message)\|>).)*<\|message\|>"
+        r"(?P<content>.*?)"
+        r"(?=<\|(?:end|return|call|start)\|>|\Z)",
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    messages = list(channel_pattern.finditer(text))
+    if not messages:
+        return text
+
+    final_messages = [
+        match.group("content")
+        for match in messages
+        if match.group("channel").lower() == "final"
+    ]
+    if final_messages:
+        return "\n".join(final_messages)
+
+    # Commentary is user-visible in Harmony. Preserve it if the generation has
+    # not reached a final channel, while always discarding analysis messages.
+    commentary_messages = [
+        match.group("content")
+        for match in messages
+        if match.group("channel").lower() == "commentary"
+    ]
+    return "\n".join(commentary_messages)
+
+
+def filter_reasoning_text(text: str, mode: str = "<think>...</think>") -> str:
+    """Return final/user-visible text after applying the selected filter."""
+    if not text:
+        return ""
+
+    cleaned = str(text)
+    if mode in {"自动（常见格式）", "Harmony analysis/final"}:
+        cleaned = _filter_harmony_reasoning(cleaned)
+
+    for tag in REASONING_TAGS_BY_MODE.get(mode, ()):
+        cleaned = _remove_reasoning_tag(cleaned, tag)
+
+    if mode in {"自动（常见格式）", "Markdown 推理块"}:
+        cleaned = _remove_markdown_reasoning(cleaned)
+
+    # A few models wrap the final response as a whole. Unwrap only a full outer
+    # container so literal examples of these tags inside normal prose survive.
+    final_wrapper = re.fullmatch(
+        r"\s*<(?P<wrapper>answer|output|final)\b[^>]*>"
+        r"(?P<final_content>.*?)</(?P=wrapper)\s*>\s*",
+        cleaned,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if final_wrapper:
+        cleaned = final_wrapper.group("final_content")
+
+    cleaned = re.sub(r"\n(?:[ \t]*\n){2,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
+class ChainOfThoughtFilterNode:
+    """Filter visible chain-of-thought wrappers from another node's text."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "text": (
+                    "STRING",
+                    {
+                        "default": "",
+                        "multiline": True,
+                        "forceInput": True,
+                        "tooltip": "连接其它节点生成的文本。",
+                    },
+                ),
+                "filter_mode": (
+                    list(REASONING_FILTER_MODES),
+                    {
+                        "default": "<think>...</think>",
+                        "tooltip": "选择要过滤的思维链包装格式。自动模式会处理多种常见格式。",
+                    },
+                ),
+            }
+        }
+
+    RETURN_TYPES = ("STRING",)
+    RETURN_NAMES = ("文本",)
+    OUTPUT_TOOLTIPS = ("过滤思维链后保留的最终文本。",)
+    FUNCTION = "filter_text"
+    CATEGORY = "eastmoe/Comfy-Simple-LLM"
+    DESCRIPTION = "过滤文本中的思维链/推理块，仅输出最终可见文本。"
+
+    def filter_text(self, text: str, filter_mode: str) -> Tuple[str]:
+        return (filter_reasoning_text(text, filter_mode),)
+
+
 class SimpleOpenAIAPINode:
     """
     Simple OpenAI-compatible Chat API node for ComfyUI.
@@ -424,58 +612,7 @@ class SimpleOpenAIAPINode:
         - ```reasoning ... ```
         - markdown sections like "Reasoning:" / "思考过程："
         """
-        if not text:
-            return ""
-
-        cleaned = text
-
-        # XML-like reasoning tags.
-        tag_patterns = [
-            r"<think\b[^>]*>.*?</think>",
-            r"<thinking\b[^>]*>.*?</thinking>",
-            r"<reasoning\b[^>]*>.*?</reasoning>",
-            r"<analysis\b[^>]*>.*?</analysis>",
-            r"<chain_of_thought\b[^>]*>.*?</chain_of_thought>",
-        ]
-
-        for pattern in tag_patterns:
-            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE | re.DOTALL)
-
-        # Fenced reasoning blocks.
-        fence_patterns = [
-            r"```(?:thinking|think|reasoning|analysis)\s*.*?```",
-            r"~~~(?:thinking|think|reasoning|analysis)\s*.*?~~~",
-        ]
-
-        for pattern in fence_patterns:
-            cleaned = re.sub(pattern, "", cleaned, flags=re.IGNORECASE | re.DOTALL)
-
-        # If a model outputs explicit reasoning section followed by final answer,
-        # keep the final answer part when possible.
-        final_markers = [
-            "Final Answer:",
-            "Final:",
-            "Answer:",
-            "最终答案：",
-            "最终回答：",
-            "答案：",
-        ]
-
-        for marker in final_markers:
-            idx = cleaned.rfind(marker)
-            if idx != -1:
-                cleaned = cleaned[idx + len(marker):]
-                break
-
-        # Remove leading reasoning headings if they remain at the top.
-        cleaned = re.sub(
-            r"^\s*(Reasoning|Thinking|Analysis|思考过程|推理过程|分析)\s*[:：]\s*",
-            "",
-            cleaned,
-            flags=re.IGNORECASE,
-        )
-
-        return cleaned.strip()
+        return filter_reasoning_text(text, "自动（常见格式）")
 
     def _comfy_image_to_data_url(self, image) -> str:
         """
@@ -700,10 +837,12 @@ class SimpleOpenAIAPINode:
 
 NODE_CLASS_MAPPINGS = {
     "SimpleOpenAIAPINode": SimpleOpenAIAPINode,
+    "ChainOfThoughtFilterNode": ChainOfThoughtFilterNode,
 }
 
 NODE_DISPLAY_NAME_MAPPINGS = {
     "SimpleOpenAIAPINode": "简易 OpenAI API",
+    "ChainOfThoughtFilterNode": "思维链过滤",
 }
 
 WEB_DIRECTORY = "./web"

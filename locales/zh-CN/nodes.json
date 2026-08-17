@@ -1,15 +1,20 @@
 {
   "category": "eastmoe/Comfy-Simple-LLM",
   "node_display_names": {
-    "SimpleOpenAIAPINode": "简易 OpenAI API"
+    "SimpleOpenAIAPINode": "简易 OpenAI API",
+    "ChainOfThoughtFilterNode": "思维链过滤"
   },
   "descriptions": {
-    "SimpleOpenAIAPINode": "通过 OpenAI 兼容的 Chat Completions 接口发起一次 LLM 请求，支持文本、图片、音频、视频或媒体文件输入，并可输出文本或 JSON。"
+    "SimpleOpenAIAPINode": "通过 OpenAI 兼容的 Chat Completions 接口发起一次 LLM 请求，支持文本、图片、音频、视频或媒体文件输入，并可输出文本或 JSON。",
+    "ChainOfThoughtFilterNode": "过滤其它节点所生成文本中的思维链或推理块，仅保留最终可见文本。"
   },
   "return_names": {
     "SimpleOpenAIAPINode": [
       "文本",
       "JSON"
+    ],
+    "ChainOfThoughtFilterNode": [
+      "文本"
     ]
   },
   "SimpleOpenAIAPINode": {
@@ -108,6 +113,35 @@
       "1": {
         "name": "JSON",
         "tooltip": "当输出格式为 JSON 时返回格式化 JSON；否则为空字符串。"
+      }
+    }
+  },
+  "ChainOfThoughtFilterNode": {
+    "display_name": "思维链过滤",
+    "description": "过滤其它节点所生成文本中的思维链或推理块，仅保留最终可见文本。",
+    "inputs": {
+      "text": {
+        "name": "文本",
+        "tooltip": "连接其它节点生成的文本。"
+      },
+      "filter_mode": {
+        "name": "过滤模式",
+        "tooltip": "选择思维链的包装格式；自动模式会处理多种常见格式。",
+        "options": {
+          "<think>...</think>": "<think>...</think>（常用）",
+          "自动（常见格式）": "自动（常见格式）",
+          "<thinking>...</thinking>": "<thinking>...</thinking>",
+          "<reasoning>...</reasoning>": "<reasoning>...</reasoning>",
+          "<analysis>...</analysis>": "<analysis>...</analysis>",
+          "Markdown 推理块": "Markdown 推理块",
+          "Harmony analysis/final": "Harmony analysis/final"
+        }
+      }
+    },
+    "outputs": {
+      "0": {
+        "name": "文本",
+        "tooltip": "过滤思维链后保留的最终文本。"
       }
     }
   }

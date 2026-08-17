@@ -6,6 +6,7 @@
 
 ```text
 eastmoe -> Comfy-Simple-LLM -> 简易 OpenAI API
+eastmoe -> Comfy-Simple-LLM -> 思维链过滤
 ```
 
 ## 功能
@@ -16,6 +17,7 @@ eastmoe -> Comfy-Simple-LLM -> 简易 OpenAI API
 - 支持 `reasoning_effort`，可选 `off`、`low`、`medium`、`high`、`xhigh`、`max`，并会尽量过滤推理模型输出中的思考片段。
 - 支持可选图片、音频、视频输入，也可以通过 `media_path` 传入本地媒体文件。
 - 支持文本输出和 JSON 输出。
+- 提供独立的“思维链过滤”节点，可连接任意文本输出，并按 `<think>`、`<thinking>`、`<reasoning>`、`<analysis>`、Markdown 推理块或 Harmony `analysis/final` 通道过滤思维链。
 - 提供中文本地化文件 `locales/zh-CN/nodeDefs.json`、`locales/zh/nodeDefs.json` 和 `locales/zh-cn/nodeDefs.json`，用于覆盖节点、参数和接口名称；同时保留 `locales/zh-CN/nodes.json` 作为兼容说明文件。
 - 内置前端扩展 `web/simple_llm_i18n.js`，即使 ComfyUI 全局界面语言不是中文，也会把本节点标题、插槽和参数标签显示为中文。
 
@@ -73,6 +75,26 @@ pip install -r requirements.txt
 | `text` | 模型最终文本响应。 |
 | `json` | 当 `output_format=json` 时输出格式化 JSON；否则为空字符串。 |
 
+### 思维链过滤
+
+节点类名：`ChainOfThoughtFilterNode`
+
+将其它节点的文本输出连接到 `text` 输入，节点会删除指定格式的思维链，并从 `文本` 输出最终内容。默认模式为最常见且较保守的 `<think>...</think>`。
+
+过滤模式：
+
+| 模式 | 行为 |
+| --- | --- |
+| `<think>...</think>` | 仅过滤 `think` 标签，包括缺少起始或结束标签的截断输出。 |
+| `自动（常见格式）` | 过滤所有受支持的标签、Markdown 推理块及 Harmony analysis 通道。 |
+| `<thinking>...</thinking>` | 仅过滤 `thinking` 标签。 |
+| `<reasoning>...</reasoning>` | 仅过滤 `reasoning` 标签。 |
+| `<analysis>...</analysis>` | 仅过滤 `analysis` 标签。 |
+| `Markdown 推理块` | 过滤标记为 think/thinking/reasoning/analysis 的代码围栏，或“Reasoning → Final Answer”章节。 |
+| `Harmony analysis/final` | 从原始 Harmony 文本中丢弃 analysis 通道并提取 final 通道。 |
+
+自动模式还识别 `<chain_of_thought>...</chain_of_thought>`。当最终回答整体包在 `<answer>`、`<output>` 或 `<final>` 中时，节点会去掉最外层标签。
+
 ## 使用提示
 
 - 如果使用非 OpenAI 官方服务，请确认该服务支持 `/v1/chat/completions` 和你启用的参数。
@@ -80,6 +102,7 @@ pip install -r requirements.txt
 - DeepSeek 思考模式下，`message.reasoning_content` 和 `message.content` 是分开的；`max_tokens` 可能会先被推理内容消耗完，导致最终 `content` 为空。节点会在 `max` 推理耗尽预算时自动用 `high` 重试一次；如果仍无最终内容，会在文本输出中显示诊断信息。
 - 如果要传入视频文件，优先使用 `media_path`，并确认后端支持 `video_url` data URL。
 - JSON 模式会请求后端返回 JSON；如果模型仍返回非法 JSON，节点会把原始内容包装到一个 JSON 对象中。
+- 思维链过滤节点默认只处理 `<think>`，适合大多数 DeepSeek-R1/Qwen3 类输出；只有在来源格式不确定时才建议使用自动模式。
 
 ## 依赖
 
